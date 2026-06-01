@@ -419,7 +419,7 @@ function calculateSubtotal(basePrice, quantity, extras){
 
     });
 
-    return (basePrice * quantity) + extrasTotal;
+    return (basePrice + extrasTotal) * quantity;
 
 }
 
@@ -515,34 +515,38 @@ document.querySelectorAll(".portion-select").forEach(select => {
 
 document.querySelectorAll(".menu-card").forEach(card => {
 
-    const minusBtn = card.querySelector(".minus");
-    const plusBtn = card.querySelector(".plus");
-    const qtyValue = card.querySelector(".qty-value");
+    // On cherche les boutons (soit version simple, soit version produit complexe)
+    const minusBtn = card.querySelector(".minus") || card.querySelector(".product-minus");
+    const plusBtn = card.querySelector(".plus") || card.querySelector(".product-plus");
+    const qtyValue = card.querySelector(".qty-value") || card.querySelector(".product-qty");
 
-    let quantity = 0;
+    // Si la carte n'a pas de système de quantité, on passe à la suivante
+    if (!minusBtn || !plusBtn || !qtyValue) return;
 
-    plusBtn.addEventListener("click", () => {
-
-        quantity++;
-
-        qtyValue.textContent = quantity;
-
-        updateProduct(card, quantity);
-
+    // ÉVÉNEMENT CLICK : PLUS (+)
+    plusBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        
+        // On lit la quantité réelle écrite sur CETTE carte précise
+        let currentQuantity = parseInt(qtyValue.textContent) || 0;
+        currentQuantity++;
+        
+        qtyValue.textContent = currentQuantity;
+        updateProduct(card, currentQuantity);
     });
 
-    minusBtn.addEventListener("click", () => {
-
-        if(quantity > 0){
-
-            quantity--;
-
-            qtyValue.textContent = quantity;
-
-            updateProduct(card, quantity);
-
+    // ÉVÉNEMENT CLICK : MOINS (-)
+    minusBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        
+        // On lit la quantité réelle écrite sur CETTE carte précise
+        let currentQuantity = parseInt(qtyValue.textContent) || 0;
+        
+        if (currentQuantity > 0) {
+            currentQuantity--;
+            qtyValue.textContent = currentQuantity;
+            updateProduct(card, currentQuantity);
         }
-
     });
 
 });
@@ -666,85 +670,78 @@ function updateProduct(card, quantity){
 sendOrderBtn.addEventListener("click", () => {
 
     if(cart.length === 0){
-
         showToast("Votre commande est vide");
-
         return;
-
     }
 
     const tableNumber = tableNumberInput.value.trim();
 
     if(tableNumber === ""){
-
         showToast("Veuillez entrer votre numéro de table !");
-
         cartModal.classList.add("active");
-
         return;
-
     }
 
     let message = `🍽️ *NOUVELLE COMMANDE*%0A%0A`;
-
     message += `🪑 *Table :* ${tableNumber}%0A%0A`;
-
     message += `━━━━━━━━━━%0A%0A`;
 
     let grandTotal = 0;
+    let listePlatsPourSheets = ""; // Stockage propre pour ton tableau Google Sheets
 
     cart.forEach(item => {
-
         grandTotal += item.subtotal;
 
-        message += `🍴 *${item.name}*%0A`;
-
-        if(item.portion){
-
-            message += `• Portion : ${item.portion}%0A`;
-
+        // 1. On prépare le texte brut lisible pour Google Sheets
+        let itemText = `• ${item.name} (x${item.quantity})`;
+        if(item.portion) itemText += ` [Portion : ${item.portion}]`;
+        if(item.included.length > 0){
+            itemText += `\n  Accompagnements : ${item.included.join(", ")}`;
         }
+        if(item.extras.length > 0){
+            let extText = item.extras.map(e => `${e.name} x${e.quantity}`).join(", ");
+            itemText += `\n  Suppléments : ${extText}`;
+        }
+        itemText += `\n  Sous-total : ${formatPrice(item.subtotal)}\n\n`;
+        listePlatsPourSheets += itemText;
 
+        // 2. On prépare le texte encodé pour l'URL WhatsApp (Ton code d'origine)
+        message += `🍴 *${item.name}*%0A`;
+        if(item.portion){
+            message += `• Portion : ${item.portion}%0A`;
+        }
         message += `• Quantité : ${item.quantity}%0A%0A`;
 
         if(item.included.length > 0){
-
             message += `Accompagnements :%0A`;
-
             item.included.forEach(side => {
-
                 message += `- ${side}%0A`;
-
             });
-
             message += `%0A`;
-
         }
 
         if(item.extras.length > 0){
-
             message += `Suppléments :%0A`;
-
             item.extras.forEach(extra => {
-
                 message += `- ${extra.name} x${extra.quantity}%0A`;
-
             });
-
             message += `%0A`;
-
         }
 
         message += `💰 Sous-total : ${formatPrice(item.subtotal)}%0A%0A`;
-
         message += `━━━━━━━━━━%0A%0A`;
-
     });
 
     message += `💵 *TOTAL : ${formatPrice(grandTotal)} CFA*`;
 
-    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${message}`;
+    // ==========================================
+    // MODIFICATION ICI : Uniquement le nombre brut pour Google Sheets
+    // ==========================================
+    const totalFormate = grandTotal; 
+    saveOrderToGoogleSheets(tableNumber, listePlatsPourSheets, totalFormate);
 
+    // OUVERTURE DE WHATSAPP (Le message garde ses textes et formats)
+    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${message}`;
     window.open(url, "_blank");
 
 });
@@ -752,31 +749,19 @@ sendOrderBtn.addEventListener("click", () => {
 /* ========================= */
 /* SYNC CARDS */
 /* ========================= */
-
 function syncCards(){
 
     document.querySelectorAll(".menu-card").forEach(card => {
-
-        const qtyValue = card.querySelector(".qty-value");
-
-        qtyValue.textContent = 0;
-
+        const qtyValue = card.querySelector(".qty-value") || card.querySelector(".product-qty");
+        if(qtyValue) qtyValue.textContent = 0;
     });
 
     cart.forEach(item => {
-
-        const card = document.querySelector(
-            `.menu-card[data-id="${item.id}"]`
-        );
-
+        const card = document.querySelector(`.menu-card[data-id="${item.id}"]`);
         if(card){
-
-            const qtyValue = card.querySelector(".qty-value");
-
-            qtyValue.textContent = item.quantity;
-
+            const qtyValue = card.querySelector(".qty-value") || card.querySelector(".product-qty");
+            if(qtyValue) qtyValue.textContent = item.quantity;
         }
-
     });
 
 }
@@ -802,8 +787,8 @@ function restoreCart(){
         );
 
         if(card){
-
-            const qtyValue = card.querySelector(".qty-value");
+            // À l'intérieur du cart.forEach de restoreCart() :
+const qtyValue = card.querySelector(".product-qty") || card.querySelector(".qty-value");
 
             qtyValue.textContent = item.quantity;
 
@@ -1210,3 +1195,34 @@ window.addEventListener("beforeunload", () => {
 console.log(
     "LA SAVANE GOURMANDE - MENU QR CODE READY 🇨🇮"
 );
+/* ========================= */
+/* GOOGLE SHEETS INTEGRATION */
+/* ========================= */
+
+const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzkz8HpftABMCkdmRSj5ynCVFr62ud2gZH5Rs_Y5ahMnP0eCOOxVUXfAQmfQi8WcRU2GQ/exec";
+
+function saveOrderToGoogleSheets(tableNumber, textCommande, totalCommande) {
+    
+    // On crée un ID unique basé sur le timestamp
+    const orderId = "CMD-" + Date.now().toString().slice(-6);
+
+    // Structure de données avec le statut mis à jour
+    const payload = {
+        id: orderId,
+        table: tableNumber || "À emporter",
+        commande: textCommande, 
+        total: totalCommande, 
+        statut: "Envoyer" // <-- Modifié ici !
+    };
+
+    // Envoi direct et sécurisé à Google
+    fetch(GOOGLE_SHEET_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(() => console.log("Données envoyées à Google Sheets avec succès !"))
+    .catch(error => console.error("Erreur d'envoi Sheets :", error));
+}
